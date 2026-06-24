@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "krea2-svdquant"
+version = "0.1.0"
+description = "SVDQuant-style Krea-2-Turbo W4A4 + BF16 low-rank quantization and Triton/Gluon kernel scaffolding."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Tanmay Patil"}]
+dependencies = [
+  "torch>=2.5",
+  "safetensors>=0.4.5",
+  "huggingface_hub>=0.24",
+  "accelerate>=0.33",
+  "transformers>=4.45",
+  "diffusers @ git+https://github.com/huggingface/diffusers.git",
+]
+
+[project.optional-dependencies]
+kernels = ["triton>=3.2"]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

@@ -148,8 +148,11 @@ Note: KernelIDE runs Gluon through the `triton` language image. Use `triton.expe
 python scripts/baseline_infer.py --prompt "a cinematic robot doctor, gentle lighting"
 python scripts/collect_calib.py --out calib_cache/krea2_small --max-prompts 16
 python scripts/convert_simulated.py --calib calib_cache/krea2_small --out quantized_models/krea2-svdq-sim
+python scripts/infer_svdquant_transformer.py --svdquant-transformer quantized_models/krea2-svdq-sim --prompt "a cinematic robot doctor"
 python scripts/bench_linear.py --backend auto --m 4096 --k 6144 --n 16384
 ```
+
+The intended SVDQuant workflow is transformer-only: load the full base Krea pipeline from Hugging Face, then replace only `pipe.transformer` from the SVDQuant checkpoint. Text encoder, tokenizer, scheduler, VAE, and unquantized transformer modules stay from the base HF model.
 
 ## Development order
 

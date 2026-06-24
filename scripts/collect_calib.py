@@ -39,6 +39,10 @@ def main():
         return hook
 
     for name, mod in iter_named_linears(pipe.transformer):
+        # v1 checkpoint is transformer-block-only. Keep text_fusion/txt_in/final
+        # from the base HF model for quality and LoRA compatibility.
+        if not name.startswith("transformer_blocks."):
+            continue
         handles.append(mod.register_forward_pre_hook(make_hook(name)))
 
     prompts = (DEFAULT_PROMPTS * ((args.max_prompts + len(DEFAULT_PROMPTS) - 1) // len(DEFAULT_PROMPTS)))[: args.max_prompts]

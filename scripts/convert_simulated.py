@@ -11,6 +11,7 @@ from safetensors.torch import save_file
 from krea2_svdquant.config import SVDQuantConfig
 from krea2_svdquant.quant.svd import compute_smooth_scale, svd_lowrank
 from krea2_svdquant.quant.pack import quantize_symmetric_int4, pack_int4
+from krea2_svdquant.runtime.load import save_transformer_checkpoint_readme
 from krea2_svdquant.runtime.replace import iter_named_linears
 
 
@@ -25,12 +26,26 @@ def main():
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     absmax = torch.load(Path(args.calib) / "activation_absmax.pt", map_location="cpu")
-    pipe = Krea2Pipeline.from_pretrained(args.model, torch_dtype=torch.bfloat16, transformer=None)
     transformer = Krea2Pipeline.from_pretrained(args.model, torch_dtype=torch.bfloat16).transformer.cpu()
 
     tensors = {}
-    meta = {"base_model": args.model, "format": "krea2-svdquant-v1", "layers": {}}
+    meta = {
+        "base_model": args.model,
+        "format": "krea2-svdquant-transformer-v1",
+        "target_component": "transformer",
+        "transformer_class": "Krea2Transformer2DModel",
+        "runtime_target": "w4a16_plus_bf16_lowrank",
+        "weight_bits": 4,
+        "activation_bits": 16,
+        "group_size": args.group_size,
+        "layers": {},
+    }
     for name, mod in iter_named_linears(transformer):
+        # v1 intentionally quantizes only the main denoiser transformer blocks.
+        # Text fusion, timestep, final layer, VAE, text encoder, scheduler, etc.
+        # remain from the base HF pipeline.
+        if not name.startswith("transformer_blocks."):
+            continue
         if name not in absmax:
             print(f"skip {name}: no calibration stats")
             continue
@@ -54,6 +69,7 @@ def main():
 
     save_file(tensors, out / "transformer_svdquant.safetensors")
     (out / "svdquant_config.json").write_text(json.dumps(meta, indent=2))
+    save_transformer_checkpoint_readme(out, args.model)
     print(f"saved to {out}")
 
 

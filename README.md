@@ -81,7 +81,7 @@ src/krea2_svdquant/kernels/triton/blackwell_int4.py
 src/krea2_svdquant/kernels/gluon/blackwell_fused_svdquant.py
 ```
 
-The Blackwell path is where we will iterate on `tl.dot_scaled`, FP4/NVFP4 experiments, and optional Gluon kernels. KernelIDE default GPU is currently B200 on this machine. In the KernelIDE smoke run, B200 reported PyTorch capability `(10, 0)` / SM100; RTX/GB20x Blackwell parts may report SM120, so the backend selector treats `major >= 10` as Blackwell-family.
+The Blackwell path is where we will iterate on `tl.dot_scaled`, FP4/NVFP4 experiments, and Gluon kernels. KernelIDE default GPU is currently B200 on this machine. In the KernelIDE smoke run, B200 reported PyTorch capability `(10, 0)` / SM100; RTX/GB20x Blackwell parts may report SM120, so the backend selector treats `major >= 10` as Blackwell-family.
 
 ## Install
 
@@ -114,13 +114,13 @@ Run generic fallback on H100/A100:
 kernelide submit scripts/kernelide_smoke_triton.py --language triton --gpu H100 --timeout 120
 ```
 
-Gluon placeholder/smoke script:
+Gluon smoke script, using `triton.experimental.gluon`:
 
 ```bash
 kernelide submit scripts/kernelide_smoke_gluon.py --language triton --gpu B200 --timeout 120
 ```
 
-Note: KernelIDE currently lists `triton` but not a separate `gluon` language. The Gluon path is kept as an optional Python module and can be wired to the exact Gluon package/API once available in the KernelIDE image.
+Note: KernelIDE runs Gluon through the `triton` language image. Use `triton.experimental.gluon`, not a top-level `gluon` package. Gluon kernels require explicit layouts, e.g. `gl.BlockedLayout([1], [32], [4], [0])` for simple 1D smoke kernels.
 
 ## Main scripts
 

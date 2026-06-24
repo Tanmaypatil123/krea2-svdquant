@@ -29,7 +29,7 @@ Default choices:
 - Prefer SVDQuant Blackwell backend selector.
 - Try TorchAO FP8 weight-only transformer optimization if `torchao` exists.
 - Keep a separate Triton Blackwell file for `tl.dot_scaled`, FP4/NVFP4 experiments.
-- Keep a separate optional Gluon file. KernelIDE B200 image currently did not expose a Gluon Python module during the smoke probe, so the code falls back cleanly to Triton/simulation until the exact Gluon package is available.
+- Keep a separate Gluon file. KernelIDE B200 exposes Gluon under `triton.experimental.gluon` and Blackwell helpers under `triton.experimental.gluon.language.nvidia.blackwell`.
 
 Command:
 
@@ -61,12 +61,10 @@ PASS kernelide Triton smoke
 Status: SUCCESS
 ```
 
-Gluon probe on B200:
+Gluon smoke on B200:
 
 ```text
 GPU=NVIDIA B200 SM=(10, 0)
-missing gluon: ModuleNotFoundError
-missing triton._C.libtriton.gluon: ModuleNotFoundError
-missing triton.language.extra.gluon: ModuleNotFoundError
-PASS probe: Gluon module not present yet; Triton Blackwell path remains active.
+max_err=0.000e+00
+PASS kernelide Gluon smoke
 ```

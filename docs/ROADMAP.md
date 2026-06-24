@@ -21,6 +21,7 @@
 - SM100/B200 and SM120 tuned tile sizes.
 - Triton `tl.dot_scaled` / FP4/NVFP4 experiments where applicable.
 - Optional Gluon fused kernels once the runtime package/API is available.
+- Calibrated E2M1/MXFP4 quantizer for Krea2 weights/activations so the verified `tl.dot_scaled` speed path becomes an image-quality-preserving inference path.
 
 ## V3: fused runtime
 

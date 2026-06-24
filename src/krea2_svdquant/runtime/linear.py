@@ -32,6 +32,8 @@ class SVDQuantLinear(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         backend = self.backend
         if backend is BackendKind.AUTO:
+            # Blackwell/B200 uses the specialized path. Every other CUDA GPU uses
+            # the portable normal-Triton path by default.
             backend = BackendKind.TRITON_BLACKWELL if is_blackwell_or_newer() else BackendKind.TRITON_GENERIC
 
         # Kernel backends are wired as explicit imports so missing Triton/Gluon gives a clear fallback.

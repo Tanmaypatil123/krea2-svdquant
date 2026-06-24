@@ -64,13 +64,15 @@ W_migrated ≈ W_res + L1 @ L2
 
 ## Paths
 
-### Generic GPUs
+### Generic non-Blackwell GPUs
 
-Use safe Triton kernels and conservative tiling. This path should work on T4/L4/A10/A100/L40S/H100/H200/B200 if Triton supports the GPU.
+Use safe, normal Triton kernels and conservative tiling. This path is the fallback for all NVIDIA GPUs that are not B200/Blackwell-family, for example T4, A10, A100, RTX 3090, RTX 4090, L4, L40S, H100, and H200, as long as Triton supports the GPU.
 
 ```text
 src/krea2_svdquant/kernels/triton/generic_int4.py
 ```
+
+See `docs/GENERIC_KERNELS.md` for the rules: no Gluon TCGEN05, no Blackwell tensor memory, no mandatory `tl.dot_scaled`/E2M1 path.
 
 ### Blackwell / B200 / SM100 / SM120
 

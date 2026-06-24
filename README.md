@@ -132,6 +132,12 @@ Packed W4A16 correctness baseline:
 kernelide submit scripts/kernelide_w4a16_linear_triton.py --language triton --gpu B200 --timeout 180
 ```
 
+Generic non-Blackwell Triton activation INT4 quantization:
+
+```bash
+kernelide submit scripts/kernelide_activation_quant_triton.py --language triton --gpu H100 --timeout 120
+```
+
 Note: KernelIDE runs Gluon through the `triton` language image. Use `triton.experimental.gluon`, not a top-level `gluon` package. Gluon kernels require explicit layouts, e.g. `gl.BlockedLayout([1], [32], [4], [0])` for simple 1D smoke kernels.
 
 ## Main scripts

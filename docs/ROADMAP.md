@@ -14,6 +14,7 @@
 - Dynamic A4 quantization kernel.
 - W4A4 GEMM for Krea2 shapes.
 - Correctness tests against PyTorch simulation.
+- H100/A100/L40S-friendly kernels that do not depend on Blackwell `tl.dot_scaled` or Gluon TCGEN05.
 
 ## V2: Blackwell/B200
 

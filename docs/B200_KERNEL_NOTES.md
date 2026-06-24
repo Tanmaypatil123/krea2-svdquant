@@ -134,6 +134,39 @@ src/krea2_svdquant/kernels/triton/blackwell_int4.py
 
 Then add Gluon TCGEN05 implementation with explicit layouts.
 
+## Generic non-Blackwell Triton kernels
+
+These intentionally avoid B200-only `dot_scaled`/TCGEN05 features.
+
+Packed W4A16 linear on H100:
+
+```bash
+kernelide submit scripts/kernelide_w4a16_linear_triton.py --language triton --gpu H100 --timeout 180
+```
+
+Result:
+
+```text
+GPU=NVIDIA H100 80GB HBM3 SM=(9, 0) triton=3.7.0
+case M=512 N=4096 K=6144 dtype=float16 time_ms=7.707 dense_equiv_tflops=3.34 rel_l2=7.288e-06
+case M=512 N=16384 K=6144 dtype=float16 time_ms=29.728 dense_equiv_tflops=3.47 rel_l2=7.339e-06
+PASS packed W4A16 Triton linear smoke
+```
+
+Generic rowwise activation INT4 quantization on H100:
+
+```bash
+kernelide submit scripts/kernelide_activation_quant_triton.py --language triton --gpu H100 --timeout 120
+```
+
+Result:
+
+```text
+GPU=NVIDIA H100 80GB HBM3 SM=(9, 0) triton=3.7.0
+rowwise_int4_quant M=1024 K=6144 time_ms=0.018 effective_GBps=880.05 max_err=7.263e-01 mean_err=2.099e-04
+PASS generic Triton activation INT4 quant smoke
+```
+
 ## Claude Code status
 
 Attempted to ask Claude Code with:

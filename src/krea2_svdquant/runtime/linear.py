@@ -35,6 +35,8 @@ class SVDQuantLinear(nn.Module):
         self.backend = BackendKind(backend)
         self.group_size = int(state.group_size)
         self.original_shape = tuple(int(v) for v in state.original_shape)
+        self.qweight_packed = bool(state.qweight_packed)
+        self.padded_in_features = state.padded_in_features
         self.register_buffer("smooth_scale", state.smooth_scale.contiguous(), persistent=True)
         self.register_buffer("qweight", state.qweight.contiguous(), persistent=True)
         self.register_buffer("weight_scales", state.weight_scales.contiguous(), persistent=True)
@@ -56,6 +58,8 @@ class SVDQuantLinear(nn.Module):
             bias=self.bias,
             group_size=self.group_size,
             original_shape=self.original_shape,
+            qweight_packed=self.qweight_packed,
+            padded_in_features=self.padded_in_features,
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

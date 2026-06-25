@@ -8,7 +8,6 @@ from safetensors.torch import load_file
 from torch import nn
 
 from krea2_svdquant.config import BackendKind
-from krea2_svdquant.quant.pack import unpack_int4
 from krea2_svdquant.quant.svd import SVDQuantLinearState
 from krea2_svdquant.runtime.linear import SVDQuantLinear
 from krea2_svdquant.runtime.replace import replace_module
@@ -75,20 +74,22 @@ def load_svdquant_transformer(
         shape = tuple(layer_meta["shape"])
         out_features, in_features = int(shape[0]), int(shape[1])
         qweight_packed = tensors[f"{key}.qweight_packed"]
-        # Converter pads along input dim to group size, so recover padded K from packed width.
+        # Keep qweight packed in memory. The runtime unpacks per-layer/per-chunk,
+        # which saves several GiB versus expanding every INT4 weight to int8 at load.
         padded_in = qweight_packed.shape[1] * 2
-        qweight = unpack_int4(qweight_packed, values_last_dim=padded_in).reshape(out_features, padded_in)
 
         bias_name = f"{key}.bias"
         state = SVDQuantLinearState(
             smooth_scale=tensors[f"{key}.smooth_scale"],
-            qweight=qweight,
+            qweight=qweight_packed,
             weight_scales=tensors[f"{key}.weight_scales"],
             l1=tensors[f"{key}.l1"],
             l2=tensors[f"{key}.l2"],
             bias=tensors[bias_name] if bias_name in tensors else None,
             group_size=int(layer_meta.get("group_size", config.get("group_size", 128))),
             original_shape=(out_features, in_features),
+            qweight_packed=True,
+            padded_in_features=padded_in,
         )
         replace_module(transformer, layer_name, SVDQuantLinear(state, backend=backend))
         replaced.append(layer_name)

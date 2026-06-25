@@ -6,7 +6,7 @@ import os
 import torch
 import torch.nn.functional as F
 
-from .pack import dequantize_symmetric_int4, quantize_symmetric_int4
+from .pack import dequantize_symmetric_int4, quantize_symmetric_int4, unpack_int4
 
 
 @dataclass
@@ -19,6 +19,8 @@ class SVDQuantLinearState:
     bias: torch.Tensor | None
     group_size: int
     original_shape: tuple[int, int]
+    qweight_packed: bool = False
+    padded_in_features: int | None = None
 
 
 def compute_smooth_scale(x_absmax: torch.Tensor, weight: torch.Tensor, min_value=0.25, max_value=4.0):
@@ -122,33 +124,35 @@ def svdquant_linear_sim(x: torch.Tensor, state: SVDQuantLinearState) -> torch.Te
     scales = state.weight_scales.to(device=x.device)
     l1 = state.l1.to(device=x.device, dtype=x.dtype)
     l2 = state.l2.to(device=x.device, dtype=x.dtype)
+    padded_in = state.padded_in_features or (qweight.shape[-1] * 2 if state.qweight_packed else qweight.shape[-1])
+
+    def dequant_rows(start: int | None = None, end: int | None = None) -> torch.Tensor:
+        qw = qweight if start is None else qweight[start:end]
+        sc = scales if start is None else scales[start:end]
+        if state.qweight_packed:
+            qw = unpack_int4(qw, values_last_dim=padded_in).reshape(-1, padded_in)
+        w = dequantize_symmetric_int4(qw, sc, group_size=state.group_size, dim=1, dtype=x.dtype)
+        return w[..., : state.original_shape[1]]
 
     out_chunk = int(os.environ.get("KREA2_SVDQ_OUT_CHUNK", "0") or 0)
-    if out_chunk > 0 and qweight.shape[0] > out_chunk:
+    out_features = state.original_shape[0]
+    if out_chunk > 0 and out_features > out_chunk:
         # Consumer-GPU safety path: dequantize and matmul only a slice of output
         # channels at a time. This is slower than the normal PyTorch reference, but
         # it avoids transient full-size dequantized weights and large GEMM
         # workspaces, which is useful until the fused Triton/Gluon kernels land.
         lowrank_mid = F.linear(x_hat, l2)
         chunks = []
-        for start in range(0, qweight.shape[0], out_chunk):
-            end = min(start + out_chunk, qweight.shape[0])
-            w_res = dequantize_symmetric_int4(
-                qweight[start:end],
-                scales[start:end],
-                group_size=state.group_size,
-                dim=1,
-                dtype=x.dtype,
-            )
-            w_res = w_res[..., : state.original_shape[1]]
+        for start in range(0, out_features, out_chunk):
+            end = min(start + out_chunk, out_features)
+            w_res = dequant_rows(start, end)
             y_part = F.linear(x_hat, w_res) + F.linear(lowrank_mid, l1[start:end])
             if state.bias is not None:
                 y_part = y_part + state.bias[start:end].to(device=x.device, dtype=x.dtype)
             chunks.append(y_part)
         return torch.cat(chunks, dim=-1)
 
-    w_res = dequantize_symmetric_int4(qweight, scales, group_size=state.group_size, dim=1, dtype=x.dtype)
-    w_res = w_res[..., : state.original_shape[1]]
+    w_res = dequant_rows()
     y_res = F.linear(x_hat, w_res)
     y_lr = F.linear(F.linear(x_hat, l2), l1)
     y = y_res + y_lr

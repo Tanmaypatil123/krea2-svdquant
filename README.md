@@ -154,6 +154,41 @@ python scripts/bench_linear.py --backend auto --m 4096 --k 6144 --n 16384
 
 The intended SVDQuant workflow is transformer-only: load the full base Krea pipeline from Hugging Face, then replace only `pipe.transformer` from the SVDQuant checkpoint. Text encoder, tokenizer, scheduler, VAE, and unquantized transformer modules stay from the base HF model.
 
+## Nunchaku-style API for Krea2 Turbo
+
+```python
+import torch
+from diffusers import Krea2Pipeline
+from krea2_svdquant import Krea2SVDQuantTransformer2DModel
+from krea2_svdquant.utils import get_gpu_memory, get_precision, get_torch_dtype
+
+torch_dtype = get_torch_dtype(get_precision())
+
+transformer = Krea2SVDQuantTransformer2DModel.from_pretrained(
+    "your-org/krea2-turbo-svdquant-transformer",
+    torch_dtype=torch_dtype,
+)
+
+pipeline = Krea2Pipeline.from_pretrained(
+    "krea/Krea-2-Turbo",
+    transformer=transformer,
+    torch_dtype=torch_dtype,
+)
+
+if get_gpu_memory() > 18:
+    pipeline.enable_model_cpu_offload()
+else:
+    pipeline.enable_sequential_cpu_offload()
+
+image = pipeline(
+    "a tiny robot doctor holding a glowing flower, cinematic",
+    num_inference_steps=8,
+    guidance_scale=0.0,
+).images[0]
+```
+
+Full example: `examples/krea2_svdquant_api.py`.
+
 ## Development order
 
 1. Make the simulated PyTorch `SVDQuantLinearSim` produce good layer/block/full-image quality.

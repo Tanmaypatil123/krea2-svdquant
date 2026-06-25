@@ -29,7 +29,7 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--svdquant-transformer",
         required=True,
-        help="Directory with svdquant_config.json and transformer_svdquant.safetensors.",
+        help="Local directory or Hugging Face repo id with svdquant_config.json and transformer_svdquant.safetensors.",
     )
     ap.add_argument(
         "--backend",

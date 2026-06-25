@@ -17,6 +17,38 @@ def _layer_key(layer_name: str) -> str:
     return layer_name.replace(".", "__")
 
 
+def _resolve_checkpoint_dir(checkpoint_dir: str | Path) -> Path:
+    """Resolve a local checkpoint directory or a Hugging Face model repo id.
+
+    ``Patil/krea-turbo-svdquant`` is a Hub repo id, not a filesystem path. If the
+    local path does not contain the expected files, download just the checkpoint
+    files from the Hub cache and return that snapshot path.
+    """
+    path = Path(checkpoint_dir)
+    if (path / "svdquant_config.json").exists() and (path / "transformer_svdquant.safetensors").exists():
+        return path
+    if path.exists():
+        return path
+
+    repo_id = str(checkpoint_dir)
+    if "/" not in repo_id or repo_id.startswith((".", "/", "~")):
+        return path
+    try:
+        from huggingface_hub import snapshot_download
+    except Exception as exc:  # pragma: no cover - environment dependent
+        raise FileNotFoundError(
+            f"missing {path / 'svdquant_config.json'} and huggingface_hub is not installed; "
+            "install huggingface_hub or pass a local checkpoint directory"
+        ) from exc
+
+    resolved = snapshot_download(
+        repo_id=repo_id,
+        repo_type="model",
+        allow_patterns=["svdquant_config.json", "transformer_svdquant.safetensors", "README.md"],
+    )
+    return Path(resolved)
+
+
 def load_svdquant_transformer(
     transformer: nn.Module,
     checkpoint_dir: str | Path,
@@ -42,7 +74,7 @@ def load_svdquant_transformer(
       transformer_svdquant.safetensors
     ```
     """
-    checkpoint_dir = Path(checkpoint_dir)
+    checkpoint_dir = _resolve_checkpoint_dir(checkpoint_dir)
     config_path = checkpoint_dir / "svdquant_config.json"
     tensor_path = checkpoint_dir / "transformer_svdquant.safetensors"
     if not config_path.exists():

@@ -119,8 +119,8 @@ def svdquant_linear_sim(x: torch.Tensor, state: SVDQuantLinearState) -> torch.Te
     x_hat = x / smooth
     qweight = state.qweight.to(device=x.device)
     scales = state.weight_scales.to(device=x.device)
-    w_res = dequantize_symmetric_int4(qweight, scales, group_size=state.group_size, dim=1)
-    w_res = w_res[..., : state.original_shape[1]].to(dtype=x.dtype)
+    w_res = dequantize_symmetric_int4(qweight, scales, group_size=state.group_size, dim=1, dtype=x.dtype)
+    w_res = w_res[..., : state.original_shape[1]]
     y_res = F.linear(x_hat, w_res)
     l1 = state.l1.to(device=x.device, dtype=x.dtype)
     l2 = state.l2.to(device=x.device, dtype=x.dtype)

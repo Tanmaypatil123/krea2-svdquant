@@ -23,11 +23,24 @@ def quantize_symmetric_int4(x: torch.Tensor, group_size: int = 128, dim: int = -
     return q, scales.squeeze(-1)
 
 
-def dequantize_symmetric_int4(q: torch.Tensor, scales: torch.Tensor, group_size: int = 128, dim: int = -1):
+def dequantize_symmetric_int4(
+    q: torch.Tensor,
+    scales: torch.Tensor,
+    group_size: int = 128,
+    dim: int = -1,
+    dtype: torch.dtype | None = None,
+):
+    """Dequantize signed int4 values using group scales.
+
+    ``dtype`` lets runtime paths materialize the dequantized weight directly in
+    bf16/fp16 instead of briefly allocating a full fp32 copy of huge Krea2 matrices.
+    That keeps peak VRAM much closer to consumer-GPU targets.
+    """
+    out_dtype = dtype or torch.float32
     moved = q.movedim(dim, -1).contiguous()
     orig = moved.shape
-    grouped = moved.reshape(*orig[:-1], orig[-1] // group_size, group_size).float()
-    y = grouped * scales.unsqueeze(-1).float()
+    grouped = moved.reshape(*orig[:-1], orig[-1] // group_size, group_size).to(out_dtype)
+    y = grouped * scales.unsqueeze(-1).to(out_dtype)
     return y.reshape(*orig).movedim(-1, dim).contiguous()
 
 

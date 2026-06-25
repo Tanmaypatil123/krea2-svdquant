@@ -81,6 +81,57 @@ if triton is not None:
             mask=(offs_m[:, None] < M) & (offs_n[None, :] < N),
         )
 
+    @triton.jit
+    def _lowrank_add_kernel(
+        MID,
+        L1,
+        BIAS,
+        Y,
+        M: tl.constexpr,
+        N: tl.constexpr,
+        R: tl.constexpr,
+        HAS_BIAS: tl.constexpr,
+        BLOCK_M: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+        BLOCK_R: tl.constexpr,
+    ):
+        """In-place ``Y += MID @ L1.T + bias`` without a full y_lr temporary."""
+        pid_m = tl.program_id(0)
+        pid_n = tl.program_id(1)
+        offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+        offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+        offs_r = tl.arange(0, BLOCK_R)
+
+        acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
+        for r0 in range(0, R, BLOCK_R):
+            r = r0 + offs_r
+            mid = tl.load(
+                MID + offs_m[:, None] * R + r[None, :],
+                mask=(offs_m[:, None] < M) & (r[None, :] < R),
+                other=0.0,
+            )
+            l1 = tl.load(
+                L1 + offs_n[:, None] * R + r[None, :],
+                mask=(offs_n[:, None] < N) & (r[None, :] < R),
+                other=0.0,
+            )
+            acc += tl.dot(mid, tl.trans(l1), out_dtype=tl.float32)
+
+        old = tl.load(
+            Y + offs_m[:, None] * N + offs_n[None, :],
+            mask=(offs_m[:, None] < M) & (offs_n[None, :] < N),
+            other=0.0,
+        ).to(tl.float32)
+        acc += old
+        if HAS_BIAS:
+            bias = tl.load(BIAS + offs_n, mask=offs_n < N, other=0.0).to(tl.float32)
+            acc += bias[None, :]
+        tl.store(
+            Y + offs_m[:, None] * N + offs_n[None, :],
+            acc,
+            mask=(offs_m[:, None] < M) & (offs_n[None, :] < N),
+        )
+
 
 def _flatten_for_linear(x: torch.Tensor) -> tuple[torch.Tensor, tuple[int, ...]]:
     if x.ndim < 2:
@@ -142,6 +193,37 @@ def _residual_triton(x: torch.Tensor, state: SVDQuantLinearState) -> torch.Tenso
     return y.reshape(*out_prefix, n)
 
 
+def _add_lowrank_triton_(y: torch.Tensor, lowrank_mid: torch.Tensor, state: SVDQuantLinearState) -> torch.Tensor:
+    if triton is None or not y.is_cuda:
+        raise RuntimeError("Triton CUDA backend is unavailable")
+    y2d, _ = _flatten_for_linear(y)
+    mid2d, _ = _flatten_for_linear(lowrank_mid)
+    m, n = y2d.shape
+    r = mid2d.shape[-1]
+    l1 = state.l1.to(device=y.device, dtype=y.dtype)
+    if r != l1.shape[-1] or n != l1.shape[0]:
+        raise ValueError(f"lowrank shape mismatch: mid={tuple(mid2d.shape)} l1={tuple(l1.shape)} y={tuple(y2d.shape)}")
+    bias = state.bias.to(device=y.device, dtype=y.dtype) if state.bias is not None else y2d
+    grid = (triton.cdiv(m, 16), triton.cdiv(n, 64))
+    block_r = triton.next_power_of_2(r)
+    _lowrank_add_kernel[grid](
+        mid2d.contiguous(),
+        l1,
+        bias,
+        y2d,
+        M=m,
+        N=n,
+        R=r,
+        HAS_BIAS=state.bias is not None,
+        BLOCK_M=16,
+        BLOCK_N=64,
+        BLOCK_R=block_r,
+        num_warps=4,
+        num_stages=3,
+    )
+    return y
+
+
 def svdquant_linear_triton_generic(x: torch.Tensor, state: SVDQuantLinearState) -> torch.Tensor:
     """Portable fused SVDQuant runtime for CUDA GPUs.
 
@@ -155,11 +237,8 @@ def svdquant_linear_triton_generic(x: torch.Tensor, state: SVDQuantLinearState) 
         y = _residual_triton(x, state)
         smooth = state.smooth_scale.to(device=x.device, dtype=x.dtype)
         x_hat = x / smooth
-        l1 = state.l1.to(device=x.device, dtype=x.dtype)
         l2 = state.l2.to(device=x.device, dtype=x.dtype)
-        y.add_(F.linear(F.linear(x_hat, l2), l1))
-        if state.bias is not None:
-            y.add_(state.bias.to(device=x.device, dtype=x.dtype))
+        _add_lowrank_triton_(y, F.linear(x_hat, l2), state)
         return y
     except Exception:
         return svdquant_linear_sim(x, state)

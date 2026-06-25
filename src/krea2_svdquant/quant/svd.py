@@ -142,15 +142,17 @@ def svdquant_linear_sim(x: torch.Tensor, state: SVDQuantLinearState) -> torch.Te
         # it avoids transient full-size dequantized weights and large GEMM
         # workspaces, which is useful until the fused Triton/Gluon kernels land.
         lowrank_mid = F.linear(x_hat, l2)
-        chunks = []
+        y = torch.empty(*x_hat.shape[:-1], out_features, device=x.device, dtype=x.dtype)
         for start in range(0, out_features, out_chunk):
             end = min(start + out_chunk, out_features)
             w_res = dequant_rows(start, end)
-            y_part = F.linear(x_hat, w_res) + F.linear(lowrank_mid, l1[start:end])
+            y_part = F.linear(x_hat, w_res)
+            y_part.add_(F.linear(lowrank_mid, l1[start:end]))
             if state.bias is not None:
-                y_part = y_part + state.bias[start:end].to(device=x.device, dtype=x.dtype)
-            chunks.append(y_part)
-        return torch.cat(chunks, dim=-1)
+                y_part.add_(state.bias[start:end].to(device=x.device, dtype=x.dtype))
+            y[..., start:end] = y_part
+            del w_res, y_part
+        return y
 
     w_res = dequant_rows()
     y_res = F.linear(x_hat, w_res)

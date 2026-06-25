@@ -9,6 +9,7 @@ from pathlib import Path
 import torch
 from diffusers import Krea2Pipeline
 
+from krea2_svdquant.runtime.block_offload import enable_block_offload
 from krea2_svdquant.runtime.load import load_svdquant_transformer
 from krea2_svdquant.utils import report_cuda_memory
 
@@ -74,6 +75,30 @@ def build_argparser() -> argparse.ArgumentParser:
     )
     ap.add_argument("--vae-tiling", action="store_true", help="Enable VAE tiling to reduce decode peak VRAM.")
     ap.add_argument("--vae-slicing", action="store_true", help="Enable VAE slicing to reduce decode peak VRAM.")
+    ap.add_argument(
+        "--block-offload",
+        action="store_true",
+        help=(
+            "Keep transformer_blocks on CPU and stream each block to the CUDA device "
+            "only for its forward pass. Non-block transformer modules stay on CUDA. "
+            "Drastically lowers transformer VRAM for consumer GPUs at the cost of "
+            "per-step host<->device copies. Combine with --low-vram and --out-chunk."
+        ),
+    )
+    ap.add_argument(
+        "--num-blocks-on-gpu",
+        type=int,
+        default=1,
+        help="With --block-offload, how many transformer blocks to keep resident on GPU.",
+    )
+    ap.add_argument(
+        "--pin-block-memory",
+        action="store_true",
+        help=(
+            "With --block-offload, pin the CPU block weights so host->device copies are "
+            "asynchronous and faster. Uses extra (page-locked) host RAM."
+        ),
+    )
     ap.add_argument("--out", default="outputs/svdquant.png")
     return ap
 
@@ -108,7 +133,38 @@ def main():
     report = load_svdquant_transformer(pipe.transformer, args.svdquant_transformer, backend=args.backend)
     print(f"loaded_svdquant_layers={len(report['_load_report']['replaced'])}")
 
-    if args.cpu_offload == "model":
+    offloader = None
+    if args.block_offload:
+        # Block offload owns transformer placement: never run a whole-component
+        # CPU offload over the transformer, and never transformer.to(cuda) the
+        # blocks. Exclude the transformer from any Diffusers offload, move the
+        # remaining pipeline components to the device, then stream blocks.
+        if args.cpu_offload in ("model", "sequential"):
+            exclude = list(getattr(pipe, "_exclude_from_cpu_offload", []) or [])
+            if "transformer" not in exclude:
+                exclude.append("transformer")
+            pipe._exclude_from_cpu_offload = exclude
+            if args.cpu_offload == "model":
+                pipe.enable_model_cpu_offload(device=device)
+            else:
+                pipe.enable_sequential_cpu_offload(device=device)
+            print(f"cpu_offload={args.cpu_offload} (transformer excluded)")
+        else:
+            for name, comp in pipe.components.items():
+                if name != "transformer" and isinstance(comp, torch.nn.Module):
+                    comp.to(device)
+        offloader = enable_block_offload(
+            pipe.transformer,
+            device,
+            num_blocks_on_gpu=args.num_blocks_on_gpu,
+            pin_memory=args.pin_block_memory,
+        )
+        print(
+            f"block_offload=on blocks={offloader.num_blocks} "
+            f"num_blocks_on_gpu={offloader.num_blocks_on_gpu} "
+            f"pin_memory={args.pin_block_memory} containers={offloader.attr_names}"
+        )
+    elif args.cpu_offload == "model":
         pipe.enable_model_cpu_offload(device=device)
         print("cpu_offload=model")
     elif args.cpu_offload == "sequential":

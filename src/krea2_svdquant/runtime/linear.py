@@ -22,12 +22,41 @@ def is_blackwell_or_newer() -> bool:
 
 
 class SVDQuantLinear(nn.Module):
-    """Runtime wrapper for simulated and kernel-backed SVDQuant linear layers."""
+    """Runtime wrapper for simulated and kernel-backed SVDQuant linear layers.
+
+    The quantized tensors are registered as buffers instead of being kept only in a
+    Python dataclass. That makes normal PyTorch module moves work:
+    ``pipe.to("cuda")`` places qweight/scales/low-rank tensors on the GPU once,
+    rather than copying huge weights from CPU on every forward pass.
+    """
 
     def __init__(self, state: SVDQuantLinearState, backend: BackendKind | str = BackendKind.AUTO):
         super().__init__()
-        self.state = state
         self.backend = BackendKind(backend)
+        self.group_size = int(state.group_size)
+        self.original_shape = tuple(int(v) for v in state.original_shape)
+        self.register_buffer("smooth_scale", state.smooth_scale.contiguous(), persistent=True)
+        self.register_buffer("qweight", state.qweight.contiguous(), persistent=True)
+        self.register_buffer("weight_scales", state.weight_scales.contiguous(), persistent=True)
+        self.register_buffer("l1", state.l1.contiguous(), persistent=True)
+        self.register_buffer("l2", state.l2.contiguous(), persistent=True)
+        if state.bias is None:
+            self.bias = None
+        else:
+            self.register_buffer("bias", state.bias.contiguous(), persistent=True)
+
+    @property
+    def state(self) -> SVDQuantLinearState:
+        return SVDQuantLinearState(
+            smooth_scale=self.smooth_scale,
+            qweight=self.qweight,
+            weight_scales=self.weight_scales,
+            l1=self.l1,
+            l2=self.l2,
+            bias=self.bias,
+            group_size=self.group_size,
+            original_shape=self.original_shape,
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         backend = self.backend

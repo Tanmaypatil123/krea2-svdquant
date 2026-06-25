@@ -27,6 +27,36 @@ def get_precision(device: int | str | torch.device | None = None) -> str:
     return "bf16" if major >= 8 else "fp16"
 
 
+def cuda_memory_stats(device: int | str | torch.device | None = None) -> dict[str, float]:
+    """Return allocated/reserved/peak CUDA memory in GiB.
+
+    Returns zeros when CUDA is unavailable so callers can report uniformly on CPU-only
+    machines without branching.
+    """
+    if not torch.cuda.is_available():
+        return {"allocated": 0.0, "reserved": 0.0, "peak": 0.0}
+    return {
+        "allocated": torch.cuda.memory_allocated(device) / 2**30,
+        "reserved": torch.cuda.memory_reserved(device) / 2**30,
+        "peak": torch.cuda.max_memory_allocated(device) / 2**30,
+    }
+
+
+def report_cuda_memory(tag: str, device: int | str | torch.device | None = None) -> str:
+    """Print and return a one-line VRAM stamp for the given stage tag."""
+    if not torch.cuda.is_available():
+        line = f"[vram] {tag}: cuda_unavailable"
+        print(line)
+        return line
+    s = cuda_memory_stats(device)
+    line = (
+        f"[vram] {tag}: allocated={s['allocated']:.2f}GiB "
+        f"reserved={s['reserved']:.2f}GiB peak={s['peak']:.2f}GiB"
+    )
+    print(line)
+    return line
+
+
 def get_torch_dtype(precision: str | None = None) -> torch.dtype:
     if precision is None:
         precision = get_precision()

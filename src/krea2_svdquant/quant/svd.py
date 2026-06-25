@@ -27,15 +27,60 @@ def compute_smooth_scale(x_absmax: torch.Tensor, weight: torch.Tensor, min_value
     return s.clamp(min_value, max_value).to(weight.device, dtype=weight.dtype)
 
 
-def svd_lowrank(weight: torch.Tensor, rank: int):
-    """Return L1 [out, rank], L2 [rank, in] for weight [out, in]."""
-    u, s, vh = torch.linalg.svd(weight.float(), full_matrices=False)
-    u_r = u[:, :rank]
-    s_r = s[:rank]
-    vh_r = vh[:rank, :]
+def svd_lowrank(
+    weight: torch.Tensor,
+    rank: int,
+    *,
+    oversample: int = 8,
+    niter: int = 4,
+    device: str | torch.device | None = None,
+    exact: bool = False,
+):
+    """Return L1 [out, rank], L2 [rank, in] for weight [out, in].
+
+    Uses randomized/truncated SVD by default, which is dramatically cheaper than a
+    full ``torch.linalg.svd`` for the huge Krea2 linears (e.g. 6144x16384) while
+    recovering the leading ``rank`` singular directions to high accuracy.
+
+    Args:
+        weight: 2D weight tensor [out_features, in_features].
+        rank: target low-rank dimension. Clamped to ``min(out, in)``.
+        oversample: extra probing columns for the randomized range finder. A small
+            oversample (5-10) markedly improves accuracy of the top singular values.
+        niter: number of power/subspace iterations. More iterations sharpen the
+            approximation when the spectrum decays slowly; 2-4 is usually enough.
+        device: device to run the decomposition on (e.g. ``"cuda"``). Defaults to the
+            weight's own device. The returned tensors are moved back to the weight's
+            original device/dtype.
+        exact: force a full ``torch.linalg.svd`` (useful for tiny layers or to sanity
+            check the randomized path). Also used automatically for very small matrices
+            where randomized SVD has no benefit.
+    """
+    if weight.ndim != 2:
+        raise ValueError("svd_lowrank expects a 2D [out, in] weight")
+    orig_device, orig_dtype = weight.device, weight.dtype
+    compute_device = torch.device(device) if device is not None else orig_device
+    w = weight.to(device=compute_device, dtype=torch.float32)
+
+    min_dim = min(w.shape)
+    rank = max(1, min(int(rank), min_dim))
+    # q is the number of columns the randomized range finder probes with.
+    q = min(rank + max(0, int(oversample)), min_dim)
+
+    if exact or min_dim <= max(q, 32):
+        u, s, vh = torch.linalg.svd(w, full_matrices=False)
+        u_r, s_r, vh_r = u[:, :rank], s[:rank], vh[:rank, :]
+    else:
+        # torch.svd_lowrank performs randomized SVD: U [out, q], S [q], V [in, q].
+        u, s, v = torch.svd_lowrank(w, q=q, niter=max(0, int(niter)))
+        u_r, s_r, vh_r = u[:, :rank], s[:rank], v[:, :rank].transpose(-2, -1)
+
     l1 = u_r * s_r.unsqueeze(0)
     l2 = vh_r
-    return l1.to(weight.dtype), l2.to(weight.dtype)
+    return (
+        l1.to(device=orig_device, dtype=orig_dtype).contiguous(),
+        l2.to(device=orig_device, dtype=orig_dtype).contiguous(),
+    )
 
 
 def quantize_linear_from_samples(

@@ -23,6 +23,9 @@ class SVDQuantConfig:
     attn_rank: int = 32
     smooth_min: float = 0.25
     smooth_max: float = 4.0
+    # Randomized/truncated SVD controls for the low-rank branch.
+    svd_oversample: int = 8
+    svd_niter: int = 4
     lowrank_dtype: str = "bfloat16"
     output_dtype: str = "bfloat16"
     target_modules: tuple[str, ...] = field(

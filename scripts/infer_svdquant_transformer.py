@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import gc
+import os
 import time
 from pathlib import Path
 
@@ -56,6 +57,16 @@ def build_argparser() -> argparse.ArgumentParser:
         ),
     )
     ap.add_argument(
+        "--out-chunk",
+        type=int,
+        default=0,
+        help=(
+            "Chunk output channels per SVDQuant linear in the PyTorch reference runtime. "
+            "Example: 2048 lowers peak VRAM for 1024px consumer tests at the cost of "
+            "slower generation. 0 disables chunking."
+        ),
+    )
+    ap.add_argument(
         "--max-sequence-length",
         type=int,
         default=128,
@@ -87,6 +98,9 @@ def _encode_and_offload(pipe, prompt: str, device, max_sequence_length: int):
 def main():
     args = build_argparser().parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if args.out_chunk > 0:
+        os.environ["KREA2_SVDQ_OUT_CHUNK"] = str(args.out_chunk)
+        print(f"svdq_out_chunk={args.out_chunk}")
 
     pipe = Krea2Pipeline.from_pretrained(args.base_model, torch_dtype=torch.bfloat16)
     report = load_svdquant_transformer(pipe.transformer, args.svdquant_transformer, backend=args.backend)

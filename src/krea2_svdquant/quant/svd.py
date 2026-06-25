@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 
 import torch
 import torch.nn.functional as F
@@ -119,11 +120,36 @@ def svdquant_linear_sim(x: torch.Tensor, state: SVDQuantLinearState) -> torch.Te
     x_hat = x / smooth
     qweight = state.qweight.to(device=x.device)
     scales = state.weight_scales.to(device=x.device)
+    l1 = state.l1.to(device=x.device, dtype=x.dtype)
+    l2 = state.l2.to(device=x.device, dtype=x.dtype)
+
+    out_chunk = int(os.environ.get("KREA2_SVDQ_OUT_CHUNK", "0") or 0)
+    if out_chunk > 0 and qweight.shape[0] > out_chunk:
+        # Consumer-GPU safety path: dequantize and matmul only a slice of output
+        # channels at a time. This is slower than the normal PyTorch reference, but
+        # it avoids transient full-size dequantized weights and large GEMM
+        # workspaces, which is useful until the fused Triton/Gluon kernels land.
+        lowrank_mid = F.linear(x_hat, l2)
+        chunks = []
+        for start in range(0, qweight.shape[0], out_chunk):
+            end = min(start + out_chunk, qweight.shape[0])
+            w_res = dequantize_symmetric_int4(
+                qweight[start:end],
+                scales[start:end],
+                group_size=state.group_size,
+                dim=1,
+                dtype=x.dtype,
+            )
+            w_res = w_res[..., : state.original_shape[1]]
+            y_part = F.linear(x_hat, w_res) + F.linear(lowrank_mid, l1[start:end])
+            if state.bias is not None:
+                y_part = y_part + state.bias[start:end].to(device=x.device, dtype=x.dtype)
+            chunks.append(y_part)
+        return torch.cat(chunks, dim=-1)
+
     w_res = dequantize_symmetric_int4(qweight, scales, group_size=state.group_size, dim=1, dtype=x.dtype)
     w_res = w_res[..., : state.original_shape[1]]
     y_res = F.linear(x_hat, w_res)
-    l1 = state.l1.to(device=x.device, dtype=x.dtype)
-    l2 = state.l2.to(device=x.device, dtype=x.dtype)
     y_lr = F.linear(F.linear(x_hat, l2), l1)
     y = y_res + y_lr
     if state.bias is not None:

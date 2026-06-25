@@ -2,6 +2,17 @@
 
 SVDQuant-style quantization and inference runtime scaffold for [`krea/Krea-2-Turbo`](https://huggingface.co/krea/Krea-2-Turbo).
 
+## Aesthetic samples
+
+Generated with the uploaded [`Patil/krea-turbo-svdquant`](https://huggingface.co/Patil/krea-turbo-svdquant) checkpoint using the low-VRAM 768px path (`--low-vram --cpu-offload model --block-offload --num-blocks-on-gpu 1 --out-chunk 1024 --vae-tiling --vae-slicing`).
+
+![Krea Turbo SVDQuant aesthetic sample grid](https://huggingface.co/Patil/krea-turbo-svdquant/resolve/main/assets/contact_sheet.jpg)
+
+| Glasshouse cafe | Coastal bedroom | Lavender portrait | Neon bookstore |
+|---|---|---|---|
+| ![](https://huggingface.co/Patil/krea-turbo-svdquant/resolve/main/assets/glasshouse_cafe.png) | ![](https://huggingface.co/Patil/krea-turbo-svdquant/resolve/main/assets/coastal_bedroom.png) | ![](https://huggingface.co/Patil/krea-turbo-svdquant/resolve/main/assets/lavender_portrait.png) | ![](https://huggingface.co/Patil/krea-turbo-svdquant/resolve/main/assets/neon_bookstore.png) |
+
+
 This repository is intentionally set up as a research/engineering base for building our own Nunchaku-like path:
 
 - W4A4 residual branch
@@ -11,7 +22,7 @@ This repository is intentionally set up as a research/engineering base for build
 - Diffusers-compatible replacement of Krea2 transformer linear layers
 - KernelIDE smoke-test scripts
 
-> Status: initial scaffold. The PyTorch simulation path is meant to be made correct first; optimized kernels are present as development starting points and smoke-test targets.
+> Status: working transformer-only SVDQuant checkpoint/runtime. The practical low-VRAM path uses packed INT4 qweights, prompt-embedding/text-encoder offload, transformer block offload, VAE tiling/slicing, and chunked SVDQuant linear execution. Experimental Triton fused kernels are included for correctness and future optimization.
 
 ## Architecture target
 
@@ -84,6 +95,36 @@ src/krea2_svdquant/kernels/gluon/blackwell_fused_svdquant.py
 ```
 
 The Blackwell path is where we will iterate on `tl.dot_scaled`, FP4/NVFP4 experiments, and Gluon kernels. KernelIDE default GPU is currently B200 on this machine. In the KernelIDE smoke run, B200 reported PyTorch capability `(10, 0)` / SM100; RTX/GB20x Blackwell parts may report SM120, so the backend selector treats `major >= 10` as Blackwell-family.
+
+
+## Quick low-VRAM inference
+
+Install the repo, then run directly from the Hugging Face checkpoint:
+
+```bash
+python scripts/infer_svdquant_transformer.py \
+  --svdquant-transformer Patil/krea-turbo-svdquant \
+  --backend pytorch_sim \
+  --low-vram \
+  --cpu-offload model \
+  --block-offload \
+  --num-blocks-on-gpu 1 \
+  --out-chunk 1024 \
+  --vae-tiling \
+  --vae-slicing \
+  --height 768 \
+  --width 768 \
+  --steps 8 \
+  --prompt "a serene glasshouse cafe at golden hour, rain on windows, soft cinematic lighting" \
+  --out outputs/krea_svdquant.png
+```
+
+Measured RunPod RTX PRO 6000 Blackwell examples:
+
+```text
+768x768:  peak≈11.88GiB, ~9.2s, 8 steps
+1024x1024: peak≈16.96GiB, ~17.4s with PyTorch chunked backend, 8 steps
+```
 
 ## Install
 

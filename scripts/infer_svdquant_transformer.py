@@ -46,6 +46,16 @@ def build_argparser() -> argparse.ArgumentParser:
         help="Encode the prompt, then offload/remove the text encoder before generation.",
     )
     ap.add_argument(
+        "--cpu-offload",
+        default="none",
+        choices=["none", "model", "sequential"],
+        help=(
+            "Optional Diffusers/Accelerate CPU offload mode. 'model' keeps one model "
+            "component on GPU at a time; 'sequential' offloads submodules more "
+            "aggressively but is slower. Use with --low-vram for consumer GPUs."
+        ),
+    )
+    ap.add_argument(
         "--max-sequence-length",
         type=int,
         default=128,
@@ -81,7 +91,16 @@ def main():
     pipe = Krea2Pipeline.from_pretrained(args.base_model, torch_dtype=torch.bfloat16)
     report = load_svdquant_transformer(pipe.transformer, args.svdquant_transformer, backend=args.backend)
     print(f"loaded_svdquant_layers={len(report['_load_report']['replaced'])}")
-    pipe.to(device)
+
+    if args.cpu_offload == "model":
+        pipe.enable_model_cpu_offload(device=device)
+        print("cpu_offload=model")
+    elif args.cpu_offload == "sequential":
+        pipe.enable_sequential_cpu_offload(device=device)
+        print("cpu_offload=sequential")
+    else:
+        pipe.to(device)
+        print("cpu_offload=none")
     report_cuda_memory("load")
 
     kwargs = dict(

@@ -72,6 +72,8 @@ def build_argparser() -> argparse.ArgumentParser:
         default=128,
         help="Max prompt token length for the prompt-embedding path.",
     )
+    ap.add_argument("--vae-tiling", action="store_true", help="Enable VAE tiling to reduce decode peak VRAM.")
+    ap.add_argument("--vae-slicing", action="store_true", help="Enable VAE slicing to reduce decode peak VRAM.")
     ap.add_argument("--out", default="outputs/svdquant.png")
     return ap
 
@@ -115,6 +117,12 @@ def main():
     else:
         pipe.to(device)
         print("cpu_offload=none")
+    if args.vae_tiling:
+        pipe.vae.enable_tiling()
+        print("vae_tiling=on")
+    if args.vae_slicing:
+        pipe.vae.enable_slicing()
+        print("vae_slicing=on")
     report_cuda_memory("load")
 
     kwargs = dict(

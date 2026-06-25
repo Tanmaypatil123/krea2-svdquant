@@ -73,30 +73,6 @@ W_migrated ≈ W_res + L1 @ L2
 
 `s` is the activation smoothing/migration scale. `L1/L2` are BF16 low-rank tensors from SVD. `W_res` is stored as groupwise packed INT4.
 
-## Paths
-
-### Generic non-Blackwell GPUs
-
-Use safe, normal Triton kernels and conservative tiling. This path is the fallback for all NVIDIA GPUs that are not B200/Blackwell-family, for example T4, A10, A100, RTX 3090, RTX 4090, L4, L40S, H100, and H200, as long as Triton supports the GPU.
-
-```text
-src/krea2_svdquant/kernels/triton/generic_int4.py
-```
-
-See `docs/GENERIC_KERNELS.md` for the rules: no Gluon TCGEN05, no Blackwell tensor memory, no mandatory `tl.dot_scaled`/E2M1 path.
-
-### Blackwell / B200 / SM100 / SM120
-
-Use a separate backend selector and Blackwell-specialized files:
-
-```text
-src/krea2_svdquant/kernels/triton/blackwell_int4.py
-src/krea2_svdquant/kernels/gluon/blackwell_fused_svdquant.py
-```
-
-The Blackwell path is where we will iterate on `tl.dot_scaled`, FP4/NVFP4 experiments, and Gluon kernels. KernelIDE default GPU is currently B200 on this machine. In the KernelIDE smoke run, B200 reported PyTorch capability `(10, 0)` / SM100; RTX/GB20x Blackwell parts may report SM120, so the backend selector treats `major >= 10` as Blackwell-family.
-
-
 ## Quick low-VRAM inference
 
 Install the repo, then run directly from the Hugging Face checkpoint:
@@ -135,53 +111,6 @@ uv pip install -e '.[dev,kernels]'
 ```
 
 For Krea2 inference, use a CUDA machine with enough VRAM and install PyTorch matching the CUDA stack.
-
-## KernelIDE smoke tests
-
-List supported targets:
-
-```bash
-kernelide gpus
-kernelide languages
-```
-
-Run Triton smoke test on B200:
-
-```bash
-kernelide submit scripts/kernelide_smoke_triton.py --language triton --gpu B200 --timeout 120
-```
-
-Run generic fallback on H100/A100:
-
-```bash
-kernelide submit scripts/kernelide_smoke_triton.py --language triton --gpu H100 --timeout 120
-```
-
-Gluon smoke script, using `triton.experimental.gluon`:
-
-```bash
-kernelide submit scripts/kernelide_smoke_gluon.py --language triton --gpu B200 --timeout 120
-```
-
-B200 `tl.dot_scaled` FP16 x packed-E2M1 speed smoke:
-
-```bash
-kernelide submit scripts/kernelide_dot_scaled_e2m1_triton.py --language triton --gpu B200 --timeout 180
-```
-
-Packed W4A16 correctness baseline:
-
-```bash
-kernelide submit scripts/kernelide_w4a16_linear_triton.py --language triton --gpu B200 --timeout 180
-```
-
-Generic non-Blackwell Triton activation INT4 quantization:
-
-```bash
-kernelide submit scripts/kernelide_activation_quant_triton.py --language triton --gpu H100 --timeout 120
-```
-
-Note: KernelIDE runs Gluon through the `triton` language image. Use `triton.experimental.gluon`, not a top-level `gluon` package. Gluon kernels require explicit layouts, e.g. `gl.BlockedLayout([1], [32], [4], [0])` for simple 1D smoke kernels.
 
 ## Main scripts
 

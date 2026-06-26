@@ -7,10 +7,10 @@ import time
 from pathlib import Path
 
 import torch
-from diffusers import Krea2Pipeline
 
 from krea2_svdquant.runtime.block_offload import enable_block_offload
 from krea2_svdquant.runtime.load import load_svdquant_transformer
+from krea2_svdquant.runtime.lora import load_svdquant_lora_adapters
 from krea2_svdquant.utils import report_cuda_memory
 
 
@@ -99,6 +99,27 @@ def build_argparser() -> argparse.ArgumentParser:
             "asynchronous and faster. Uses extra (page-locked) host RAM."
         ),
     )
+    ap.add_argument(
+        "--lora",
+        action="append",
+        default=[],
+        help=(
+            "Optional LoRA file, local directory, or Hugging Face repo id. Can be passed "
+            "multiple times. LoRA branches are attached directly to replaced SVDQuantLinear "
+            "modules, so load order is safe for transformer LoRAs."
+        ),
+    )
+    ap.add_argument(
+        "--lora-weight-name",
+        default=None,
+        help="Optional weight filename inside each LoRA directory/repo, e.g. pytorch_lora_weights.safetensors.",
+    )
+    ap.add_argument(
+        "--lora-scale",
+        type=float,
+        default=1.0,
+        help="Scale multiplier for loaded LoRA adapters.",
+    )
     ap.add_argument("--out", default="outputs/svdquant.png")
     return ap
 
@@ -124,6 +145,8 @@ def _encode_and_offload(pipe, prompt: str, device, max_sequence_length: int):
 
 def main():
     args = build_argparser().parse_args()
+    from diffusers import Krea2Pipeline
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if args.out_chunk > 0:
         os.environ["KREA2_SVDQ_OUT_CHUNK"] = str(args.out_chunk)
@@ -132,6 +155,18 @@ def main():
     pipe = Krea2Pipeline.from_pretrained(args.base_model, torch_dtype=torch.bfloat16)
     report = load_svdquant_transformer(pipe.transformer, args.svdquant_transformer, backend=args.backend)
     print(f"loaded_svdquant_layers={len(report['_load_report']['replaced'])}")
+    for lora in args.lora:
+        lora_report = load_svdquant_lora_adapters(
+            pipe.transformer,
+            lora,
+            weight_name=args.lora_weight_name,
+            scale=args.lora_scale,
+            strict=True,
+        )
+        print(
+            f"loaded_lora={lora_report['lora_file']} "
+            f"matched_layers={len(lora_report['loaded'])} scale={args.lora_scale}"
+        )
 
     offloader = None
     if args.block_offload:

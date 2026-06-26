@@ -12,6 +12,9 @@ def main():
     parser = argparse.ArgumentParser(description="Nunchaku-style Krea2 SVDQuant API example")
     parser.add_argument("--base-model", default="krea/Krea-2-Turbo")
     parser.add_argument("--svdquant-transformer", required=True)
+    parser.add_argument("--lora", action="append", default=[], help="Optional LoRA file/dir/HF repo; repeatable.")
+    parser.add_argument("--lora-weight-name", default=None)
+    parser.add_argument("--lora-scale", type=float, default=1.0)
     parser.add_argument("--prompt", default="a tiny robot doctor holding a glowing flower, cinematic")
     parser.add_argument("--out", default="outputs/krea2_svdquant_api.png")
     args = parser.parse_args()
@@ -23,6 +26,9 @@ def main():
     transformer = Krea2SVDQuantTransformer2DModel.from_pretrained(
         args.svdquant_transformer,
         torch_dtype=torch_dtype,
+        lora_weights=args.lora or None,
+        lora_weight_name=args.lora_weight_name,
+        lora_scale=args.lora_scale,
     )
 
     pipeline = Krea2Pipeline.from_pretrained(

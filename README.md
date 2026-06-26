@@ -102,6 +102,32 @@ Measured RunPod RTX PRO 6000 Blackwell examples:
 1024x1024: peak≈16.96GiB, ~17.4s with PyTorch chunked backend, 8 steps
 ```
 
+### LoRA with SVDQuant
+
+Transformer LoRAs can be loaded on top of the SVDQuant checkpoint. The runtime attaches each LoRA as an inference-only side branch directly to the replaced `SVDQuantLinear` modules, so you do not need to load LoRA before quantization or keep the original BF16 transformer linears resident.
+
+```bash
+python scripts/infer_svdquant_transformer.py \
+  --svdquant-transformer Patil/krea-turbo-svdquant \
+  --lora your-org/your-krea2-lora \
+  --lora-scale 0.8 \
+  --backend pytorch_sim \
+  --low-vram \
+  --cpu-offload model \
+  --block-offload \
+  --num-blocks-on-gpu 1 \
+  --out-chunk 1024 \
+  --vae-tiling \
+  --vae-slicing \
+  --height 768 \
+  --width 768 \
+  --steps 8 \
+  --prompt "a cinematic Krea2 LoRA test" \
+  --out outputs/krea_svdquant_lora.png
+```
+
+Use `--lora-weight-name` when the LoRA repo/directory does not use a common filename such as `pytorch_lora_weights.safetensors` or `adapter_model.safetensors`. Multiple `--lora` flags can be passed; `--lora-scale` applies to each loaded adapter. Supported key styles include Diffusers/PEFT (`lora_A`/`lora_B`, `lora.down`/`lora.up`) and common flattened Kohya-style transformer prefixes.
+
 ## Install
 
 ```bash

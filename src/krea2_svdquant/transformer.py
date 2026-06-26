@@ -9,6 +9,7 @@ import torch
 
 from krea2_svdquant.config import BackendKind
 from krea2_svdquant.runtime.load import load_svdquant_transformer
+from krea2_svdquant.runtime.lora import load_svdquant_lora_adapters
 
 
 def _is_local_dir(path_or_repo_id: str | Path) -> bool:
@@ -93,6 +94,9 @@ class Krea2SVDQuantTransformer2DModel:
         torch_dtype: torch.dtype | None = torch.bfloat16,
         backend: BackendKind | str = BackendKind.AUTO,
         strict: bool = True,
+        lora_weights: str | Path | list[str | Path] | None = None,
+        lora_weight_name: str | None = None,
+        lora_scale: float = 1.0,
         **base_transformer_kwargs: Any,
     ):
         checkpoint_dir = _snapshot_or_local(pretrained_model_name_or_path, revision=revision)
@@ -108,6 +112,16 @@ class Krea2SVDQuantTransformer2DModel:
             **base_transformer_kwargs,
         )
         load_svdquant_transformer(transformer, checkpoint_dir, backend=backend, strict=strict)
+        if lora_weights is not None:
+            loras = [lora_weights] if isinstance(lora_weights, (str, Path)) else list(lora_weights)
+            for lora in loras:
+                load_svdquant_lora_adapters(
+                    transformer,
+                    lora,
+                    weight_name=lora_weight_name,
+                    scale=lora_scale,
+                    strict=True,
+                )
         return transformer
 
     @classmethod
@@ -120,6 +134,9 @@ class Krea2SVDQuantTransformer2DModel:
         torch_dtype: torch.dtype | None = torch.bfloat16,
         backend: BackendKind | str = BackendKind.AUTO,
         strict: bool = True,
+        lora_weights: str | Path | list[str | Path] | None = None,
+        lora_weight_name: str | None = None,
+        lora_scale: float = 1.0,
         **base_transformer_kwargs: Any,
     ):
         """Load from a standalone safetensors file plus config file.
@@ -150,5 +167,8 @@ class Krea2SVDQuantTransformer2DModel:
                 torch_dtype=torch_dtype,
                 backend=backend,
                 strict=strict,
+                lora_weights=lora_weights,
+                lora_weight_name=lora_weight_name,
+                lora_scale=lora_scale,
                 **base_transformer_kwargs,
             )

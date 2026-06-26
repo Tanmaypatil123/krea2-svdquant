@@ -1,10 +1,48 @@
 from __future__ import annotations
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 from krea2_svdquant.config import BackendKind
 from krea2_svdquant.quant.svd import SVDQuantLinearState, svdquant_linear_sim
+
+
+class SVDQuantLoRAAdapter(nn.Module):
+    """Inference-only LoRA branch attached to a quantized SVDQuant linear."""
+
+    def __init__(
+        self,
+        down_weight: torch.Tensor,
+        up_weight: torch.Tensor,
+        *,
+        scale: float = 1.0,
+        network_alpha: float | None = None,
+    ) -> None:
+        super().__init__()
+        if down_weight.ndim != 2 or up_weight.ndim != 2:
+            raise ValueError("LoRA down/up weights must be rank-2 tensors")
+        rank = int(down_weight.shape[0])
+        if rank <= 0:
+            raise ValueError("LoRA rank must be positive")
+        if int(up_weight.shape[1]) != rank:
+            raise ValueError(
+                f"LoRA shape mismatch: down={tuple(down_weight.shape)} up={tuple(up_weight.shape)}"
+            )
+        self.rank = rank
+        self.scale = float(scale)
+        self.network_alpha = float(network_alpha) if network_alpha is not None else float(rank)
+        self.register_buffer("down_weight", down_weight.contiguous(), persistent=True)
+        self.register_buffer("up_weight", up_weight.contiguous(), persistent=True)
+
+    @property
+    def multiplier(self) -> float:
+        return self.scale * (self.network_alpha / self.rank)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        down = self.down_weight.to(dtype=x.dtype)
+        up = self.up_weight.to(dtype=x.dtype)
+        return F.linear(F.linear(x, down), up) * self.multiplier
 
 
 def detect_sm() -> tuple[int, int] | None:
@@ -24,10 +62,9 @@ def is_blackwell_or_newer() -> bool:
 class SVDQuantLinear(nn.Module):
     """Runtime wrapper for simulated and kernel-backed SVDQuant linear layers.
 
-    The quantized tensors are registered as buffers instead of being kept only in a
-    Python dataclass. That makes normal PyTorch module moves work:
-    ``pipe.to("cuda")`` places qweight/scales/low-rank tensors on the GPU once,
-    rather than copying huge weights from CPU on every forward pass.
+    Quantized tensors are buffers so normal module moves and offload policies move
+    qweight/scales/low-rank tensors with the module. Optional LoRA adapters are
+    inference-only side branches added on top of the SVDQuant approximation.
     """
 
     def __init__(self, state: SVDQuantLinearState, backend: BackendKind | str = BackendKind.AUTO):
@@ -46,6 +83,32 @@ class SVDQuantLinear(nn.Module):
             self.bias = None
         else:
             self.register_buffer("bias", state.bias.contiguous(), persistent=True)
+        self.lora_adapters = nn.ModuleList()
+
+    def add_lora_adapter(
+        self,
+        down_weight: torch.Tensor,
+        up_weight: torch.Tensor,
+        *,
+        scale: float = 1.0,
+        network_alpha: float | None = None,
+    ) -> None:
+        """Attach an inference LoRA adapter to this quantized linear."""
+        expected_out, expected_in = self.original_shape
+        if tuple(down_weight.shape[1:]) != (expected_in,):
+            raise ValueError(
+                f"LoRA down input mismatch for SVDQuantLinear: expected {expected_in}, "
+                f"got {tuple(down_weight.shape)}"
+            )
+        if int(up_weight.shape[0]) != expected_out:
+            raise ValueError(
+                f"LoRA up output mismatch for SVDQuantLinear: expected {expected_out}, "
+                f"got {tuple(up_weight.shape)}"
+            )
+        adapter = SVDQuantLoRAAdapter(
+            down_weight, up_weight, scale=scale, network_alpha=network_alpha
+        )
+        self.lora_adapters.append(adapter)
 
     @property
     def state(self) -> SVDQuantLinearState:
@@ -62,14 +125,11 @@ class SVDQuantLinear(nn.Module):
             padded_in_features=self.padded_in_features,
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def _forward_base(self, x: torch.Tensor) -> torch.Tensor:
         backend = self.backend
         if backend is BackendKind.AUTO:
-            # Blackwell/B200 uses the specialized path. Every other CUDA GPU uses
-            # the portable normal-Triton path by default.
             backend = BackendKind.TRITON_BLACKWELL if is_blackwell_or_newer() else BackendKind.TRITON_GENERIC
 
-        # Kernel backends are wired as explicit imports so missing Triton/Gluon gives a clear fallback.
         if backend is BackendKind.TRITON_GENERIC:
             try:
                 from krea2_svdquant.kernels.triton.generic_int4 import svdquant_linear_triton_generic
@@ -92,3 +152,10 @@ class SVDQuantLinear(nn.Module):
             except Exception:
                 return svdquant_linear_sim(x, self.state)
         return svdquant_linear_sim(x, self.state)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        y = self._forward_base(x)
+        if self.lora_adapters:
+            for adapter in self.lora_adapters:
+                y = y + adapter(x)
+        return y
